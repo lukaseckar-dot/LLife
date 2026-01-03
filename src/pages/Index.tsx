@@ -8,8 +8,9 @@ import { ChatView } from '@/components/chat/ChatView';
 import { FriendsList } from '@/components/friends/FriendsList';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { MessageCircle, Users, LogOut, Settings } from 'lucide-react';
+import { MessageCircle, Users, LogOut } from 'lucide-react';
 
+// --- Types ---
 interface Conversation {
   id: string;
   participant: {
@@ -26,7 +27,9 @@ interface Conversation {
 
 type Tab = 'chats' | 'friends';
 
+// --- Main Component ---
 const Index: React.FC = () => {
+  // 1. All your variables are defined here
   const { user, profile, loading, signOut } = useAuth();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<Tab>('chats');
@@ -34,6 +37,7 @@ const Index: React.FC = () => {
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
   const [selectedParticipant, setSelectedParticipant] = useState<Conversation['participant'] | null>(null);
 
+  // 2. Effects
   useEffect(() => {
     if (!loading && !user) {
       navigate('/auth');
@@ -46,6 +50,7 @@ const Index: React.FC = () => {
     }
   }, [profile]);
 
+  // 3. Helper Functions
   const loadConversations = async () => {
     if (!profile) return;
 
@@ -57,23 +62,18 @@ const Index: React.FC = () => {
     if (!participations) return;
 
     const convIds = participations.map(p => p.conversation_id);
-    
     const convList: Conversation[] = [];
 
     for (const convId of convIds) {
-      // Get other participant
       const { data: otherParticipant } = await supabase
         .from('conversation_participants')
-        .select(`
-          profile:profiles (id, username, avatar_url)
-        `)
+        .select(`profile:profiles (id, username, avatar_url)`)
         .eq('conversation_id', convId)
         .neq('profile_id', profile.id)
         .maybeSingle();
 
       if (!otherParticipant?.profile) continue;
 
-      // Get last message
       const { data: lastMsg } = await supabase
         .from('messages')
         .select('content, created_at, message_type')
@@ -82,7 +82,8 @@ const Index: React.FC = () => {
         .limit(1)
         .maybeSingle();
 
-      const participantData = otherParticipant.profile as { id: string; username: string; avatar_url: string | null };
+      // @ts-ignore
+      const participantData = otherParticipant.profile;
 
       convList.push({
         id: convId,
@@ -99,7 +100,6 @@ const Index: React.FC = () => {
       });
     }
 
-    // Sort by last message time
     convList.sort((a, b) => {
       const aTime = a.lastMessage?.created_at || '';
       const bTime = b.lastMessage?.created_at || '';
@@ -109,38 +109,37 @@ const Index: React.FC = () => {
     setConversations(convList);
   };
 
+  // --- THE FIXED START CHAT FUNCTION ---
   const startChat = async (friendId: string) => {
     if (!profile) return;
 
-    // Check if conversation already exists
-    const { data: existingParticipation } = await supabase
+    // A. Check for existing conversation
+    const { data: myConvs } = await supabase
       .from('conversation_participants')
       .select('conversation_id')
       .eq('profile_id', profile.id);
 
-    if (existingParticipation) {
-      for (const p of existingParticipation) {
-        const { data: otherParticipant } = await supabase
-          .from('conversation_participants')
-          .select('profile_id')
-          .eq('conversation_id', p.conversation_id)
-          .eq('profile_id', friendId)
-          .maybeSingle();
+    if (myConvs && myConvs.length > 0) {
+      const conversationIds = myConvs.map(c => c.conversation_id);
 
-        if (otherParticipant) {
-          // Conversation exists, select it
-          const conv = conversations.find(c => c.id === p.conversation_id);
-          if (conv) {
-            setSelectedConversation(conv.id);
-            setSelectedParticipant(conv.participant);
-          }
-          setActiveTab('chats');
-          return;
-        }
+      const { data: existingMatch } = await supabase
+        .from('conversation_participants')
+        .select(`conversation_id, profile:profiles (id, username, avatar_url)`)
+        .in('conversation_id', conversationIds)
+        .eq('profile_id', friendId)
+        .maybeSingle();
+
+      if (existingMatch && existingMatch.profile) {
+        // @ts-ignore
+        const friendData = existingMatch.profile;
+        setSelectedConversation(existingMatch.conversation_id);
+        setSelectedParticipant(friendData);
+        setActiveTab('chats');
+        return;
       }
     }
 
-    // Create new conversation
+    // B. Create new conversation
     const { data: newConv, error: convError } = await supabase
       .from('conversations')
       .insert({})
@@ -149,13 +148,11 @@ const Index: React.FC = () => {
 
     if (convError || !newConv) return;
 
-    // Add participants
     await supabase.from('conversation_participants').insert([
       { conversation_id: newConv.id, profile_id: profile.id },
       { conversation_id: newConv.id, profile_id: friendId },
     ]);
 
-    // Get friend info
     const { data: friendData } = await supabase
       .from('profiles')
       .select('id, username, avatar_url')
@@ -165,17 +162,12 @@ const Index: React.FC = () => {
     if (friendData) {
       const newConversation: Conversation = {
         id: newConv.id,
-        participant: {
-          id: friendData.id,
-          username: friendData.username,
-          avatar_url: friendData.avatar_url,
-        },
+        participant: friendData,
       };
       setConversations([newConversation, ...conversations]);
       setSelectedConversation(newConv.id);
-      setSelectedParticipant(newConversation.participant);
+      setSelectedParticipant(friendData);
     }
-
     setActiveTab('chats');
   };
 
@@ -187,6 +179,7 @@ const Index: React.FC = () => {
     }
   };
 
+  // 4. Loading State
   if (loading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -195,17 +188,15 @@ const Index: React.FC = () => {
     );
   }
 
-  if (!user || !profile) {
-    return null;
-  }
+  if (!user || !profile) return null;
 
+  // 5. Render
   return (
     <div className="min-h-screen bg-background flex flex-col md:flex-row">
       {/* Sidebar */}
       <div className={`w-full md:w-80 lg:w-96 flex flex-col border-r border-border/30 ${
         selectedConversation ? 'hidden md:flex' : 'flex'
       }`}>
-        {/* Header */}
         <GlassCard variant="subtle" className="rounded-none border-x-0 border-t-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -221,12 +212,7 @@ const Index: React.FC = () => {
                   {profile.username.slice(0, 2).toUpperCase()}
                 </AvatarFallback>
               </Avatar>
-              <Button
-                size="icon"
-                variant="ghost"
-                onClick={signOut}
-                className="text-muted-foreground hover:text-foreground"
-              >
+              <Button size="icon" variant="ghost" onClick={signOut}>
                 <LogOut className="w-4 h-4" />
               </Button>
             </div>
@@ -259,7 +245,7 @@ const Index: React.FC = () => {
           </button>
         </div>
 
-        {/* Content */}
+        {/* List Content */}
         <div className="flex-1 overflow-hidden">
           {activeTab === 'chats' ? (
             <ChatList
@@ -273,7 +259,7 @@ const Index: React.FC = () => {
         </div>
       </div>
 
-      {/* Main Content */}
+      {/* Main Chat Area */}
       <div className={`flex-1 flex flex-col ${
         !selectedConversation ? 'hidden md:flex' : 'flex'
       }`}>
