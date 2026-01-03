@@ -1,0 +1,9 @@
+{
+  "appId": "app.lovable.d051feac7a784034808d5369119e302d",
+  "appName": "LLife",
+  "webDir": "dist",
+  "server": {
+    "url": "https://d051feac-7a78-4034-808d-5369119e302d.lovableproject.com?forceHideBadge=true",
+    "cleartext": true
+  }
+}
